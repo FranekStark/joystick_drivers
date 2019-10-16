@@ -35,6 +35,7 @@ class ModernJoystick{
         std::vector<std::string> _buttonsMappingParam;
         std::vector<std::string> _axesMappingParam;
         int _maxSendFrequency;
+        bool _failSave;
 
 
         //Device
@@ -68,6 +69,7 @@ class ModernJoystick{
         ~ModernJoystick();
         void feedbackCallback(const sensor_msgs::JoyFeedbackArrayConstPtr& msg);
         void timerCallback(const ros::TimerEvent & event);
+        void hartBeatTimeCallback(const ros::TimerEvent & event);
         void run();
         void init();
         bool isUP();

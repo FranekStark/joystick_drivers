@@ -6,7 +6,7 @@
 ModernJoystick * joy = nullptr; //Needed for Custom Signal handler.
 
 void sigintHandle(int sig){
-   
+
     ROS_INFO("Terminating Node");
     if(joy->isUP())
     {
@@ -34,7 +34,7 @@ int main(int argc, char **argv)
     joy = &joyer;
     signal(SIGINT, sigintHandle);
     ros::AsyncSpinner asyncSpinner(1); //A second thread is needed, because this thread will
-                                        //Block in joyer.run() 
+                                        //Block in joyer.run()
     asyncSpinner.start();
     while (ros::ok())
     {
@@ -45,7 +45,8 @@ int main(int argc, char **argv)
 
 ModernJoystick::ModernJoystick(ros::NodeHandle nh, ros::NodeHandle pnh) : _nodeHandle(nh),
                                                                           _privateNodeHandle(pnh),
-                                                                          _maxSendFrequency(100)
+                                                                          _maxSendFrequency(100),
+                                                                          _failSave(true)
 {
     this->init();
 }
@@ -59,8 +60,8 @@ void ModernJoystick::connect(){
      * Open Device
      */
     do{
-    ModernJoystick::_joyFD = open(ModernJoystick::_joyDevName.c_str(), O_RDWR); 
-    ROS_ERROR_COND(_joyFD < 0, "Failed to open Device '%s' . %s \n\r Retry in 2 seconds.", _joyDevName.c_str(),strerror(errno)); 
+    ModernJoystick::_joyFD = open(ModernJoystick::_joyDevName.c_str(), O_RDWR);
+    ROS_ERROR_COND(_joyFD < 0, "Failed to open Device '%s' . %s \n\r Retry in 2 seconds.", _joyDevName.c_str(),strerror(errno));
     }while(_joyFD < 0 && ros::Duration(2).sleep());
     int err = libevdev_new_from_fd(_joyFD, &_joyDEV);
     if(err < 0){
@@ -80,12 +81,13 @@ void ModernJoystick::init()
     _privateNodeHandle.param<std::vector<std::string>>("buttons_mapping", _buttonsMappingParam, _buttonsMappingParam);
     _privateNodeHandle.param<std::vector<std::string>>("axes_mapping", _axesMappingParam, _axesMappingParam);
     _privateNodeHandle.param<int>("max_send_frequency", _maxSendFrequency, _maxSendFrequency);
+  _privateNodeHandle.param<bool>("fail_save", _failSave, _failSave);
 
     this->connect();
 
 
     /**
-     * Quering Device Capabilitys 
+     * Quering Device Capabilitys
      */
     if (libevdev_has_event_type(_joyDEV, EV_ABS))
     {
@@ -130,7 +132,7 @@ void ModernJoystick::init()
         }
     }
 
-    
+
 
 
 
@@ -169,18 +171,18 @@ void ModernJoystick::publishJoyMessage(){
 
 void ModernJoystick::run()
 {
-    
+
     struct input_event ev;
     int evType = readJoy(ev);
     updateMessage(ev);
     if(evType == EV_KEY){
         _sendTimer.stop();//Timer is stopped, because all Events are send.  (Before publish, because of Race Conditions!);
-        publishJoyMessage();         
+        publishJoyMessage();
     }
     else if(evType == EV_ABS){
         _sendTimer.start();//Timer start, because new Event, has to be send.
     }
-    //Otherwise nothing, because no important evebt.
+    //Otherwise nothing, because no important event.
 }
 
 
@@ -190,7 +192,7 @@ void ModernJoystick::timerCallback(const ros::TimerEvent & event){
 }
 
 void ModernJoystick::feedbackCallback(const sensor_msgs::JoyFeedbackArrayConstPtr &msg)
-{	
+{
     //For Each Feedback:
     //(Each Array-Slot is one Feedback-Slot in the Device, each feedback on the
     //slot, will overwrite previous Feedbacks on this fitting Device-Slot.
@@ -274,7 +276,7 @@ void ModernJoystick::playEffect(short effectID){
         int res = write(_joyFD, &play, sizeof(play));
         if(res < 0){
             ROS_ERROR("Failed to Play Effect on Joystick!");
-        }       
+        }
 }
 
 void ModernJoystick::stopEffect(short effectID){
@@ -324,8 +326,19 @@ int ModernJoystick::readJoy(struct input_event &ev)
         else
         {
             ROS_ERROR("Error: %s", strerror(rs));
+
+          if(_failSave){
+            ROS_WARN("Fail save activated, going to set outputs to zero");
+            for(auto axe = _joyMessage.axes.begin(); axe != _joyMessage.axes.end(); axe++){
+              *axe = 0.0;
+            }
+            for(auto but = _joyMessage.buttons.begin(); but != _joyMessage.buttons.end(); but++){
+              *but = 0;
+            }
+          }
             ROS_ERROR("Trying to Reconnect Controller.");
             _sendTimer.stop();
+           publishJoyMessage();
             this->connect();
         }
     }
